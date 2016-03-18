@@ -1,0 +1,17 @@
+## Costin GALAN | cgalan@cloudbasesolutions.com
+## Wake on LAN for Linux*
+## /etc/init.d/wakeonlan
+
+## chmod 755 /etc/init.d/wakeonlan
+## chkconfig --add wakeonlan # RHEL or CentOS
+## update-rc.d wakeonlan defaults #Debian or Ubuntu
+
+## a -> ARP
+## b -> broadcast
+## u -> unicast
+## m -> multicast
+## g -> MagicPacket(TM) 
+## s -> SecureOn(TM)
+ 
+ethtool -s eth0 wol umbg
+exit
