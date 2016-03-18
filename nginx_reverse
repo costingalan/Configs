@@ -1,0 +1,242 @@
+worker_processes     4;     # one(1) worker or equal the number of _real_ cpu cores. 4=4 core cpu
+worker_priority      15;    # renice workers to reduce priority compared to system processes for
+                            # machine health. worst case nginx will get ~25% system resources at nice=15
+#worker_rlimit_nofile 1024; # maximum number of open files
+
+events {
+worker_connections 512;   # number of parallel or concurrent connections per worker_processes
+accept_mutex        on;   # serially accept() connections and pass to workers, efficient if workers gt 1
+#accept_mutex_delay 50ms; # worker process will accept mutex after this delay if not assigned. (default 500ms) 
+}
+
+http {
+
+ ## Size Limits
+ #client_body_buffer_size   8k;
+ #client_header_buffer_size 1k;
+ #client_max_body_size      1m;
+ #large_client_header_buffers 4 4k/8k;
+
+ # Timeouts, do not keep connections open longer then necessary to reduce
+ # resource usage and deny Slowloris type attacks.
+  client_body_timeout      3s; # maximum time between packets the client can pause when sending nginx any data
+  client_header_timeout    3s; # maximum time the client has to send the entire header to nginx
+  keepalive_timeout       75s; # timeout which a single keep-alive client connection will stay open
+  send_timeout             9s; # maximum time between packets nginx is allowed to pause when sending the client data
+
+ ## General Options
+ #aio                       on;  # asynchronous file I/O, fast with ZFS, make sure sendfile=off
+  charset                   utf-8; # adds the line "Content-Type" into response-header, same as "source_charset"
+  default_type              application/octet-stream;
+  gzip                      off; # disable on the fly gzip compression due to higher latency, only use gzip_static
+ #gzip_http_version         1.0; # serve gzipped content to all clients including HTTP/1.0 
+  gzip_static               on;  # precompress content (gzip -1) with an external script
+ #gzip_vary                 on;  # send response header "Vary: Accept-Encoding"
+  gzip_proxied             any;  # allows compressed responses for any request even from proxies
+  ignore_invalid_headers    on;
+  include                   /etc/mime.types;
+  keepalive_requests        50;  # number of requests per connection, does not affect SPDY
+  keepalive_disable         none; # allow all browsers to use keepalive connections
+  max_ranges                0;   # disabled to stop range header DoS attacks as resumed downloads are denied
+  msie_padding              off;
+  open_file_cache           max=1000 inactive=2h;
+  open_file_cache_errors    on;
+  open_file_cache_min_uses  1;
+  open_file_cache_valid     1h;
+  output_buffers            1 512;
+  postpone_output           1460;   # postpone sends to match our machine's MSS
+  read_ahead                512K;   # kernel read head set to the output_buffers
+  recursive_error_pages     on;
+  reset_timedout_connection on;  # reset timed out connections freeing ram
+  sendfile                  on;  # on for decent direct disk I/O
+  server_tokens             off; # version number in error pages
+  server_name_in_redirect   off; # if off, nginx will use the requested Host header
+  source_charset            utf-8; # same value as "charset"
+  tcp_nodelay               on; # Nagle buffering algorithm, used for keepalive only
+  tcp_nopush                off;
+
+ ## Log Format
+  log_format  main  '$remote_addr $host $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $ssl_cipher $request_time';
+
+ ## Proxy settings. Make sure the "timeout"s are long enough to
+ ## take account of over loaded back end servers or long running
+ ## cgi scripts. If the proxy timeout is too short the nginx proxy
+ ## might re-request the data over and over again, putting more
+ ## load on the back end server. 
+  proxy_max_temp_file_size    0;
+  proxy_connect_timeout      900;
+  proxy_send_timeout         900;
+  proxy_read_timeout         900;
+  proxy_buffer_size          4k;
+  proxy_buffers              4 32k;
+  proxy_busy_buffers_size    64k;
+  proxy_temp_file_write_size 64k;
+  proxy_intercept_errors     on;
+
+  proxy_cache_path /disk01/web_cache levels=1:2 keys_zone=webcache:10m inactive=1d max_size=2000m;
+  proxy_temp_path /disk01/web_cache/tmp;
+  proxy_cache_min_uses 5;
+
+ ## Limit requests per second to 250 requests  per minute. If the
+ ## user's ip address goes over the limit they will be sent an
+ ## error 503 for every subsequent request.
+   limit_req_zone  $binary_remote_addr  zone=gulag:10m   rate=250r/m;
+
+ ## back end web servers with "hot fail over". You can add as many back end
+ ## servers as you like here. If you add the "backup" directive the server will
+ ## only be used if the other servers are down. In this example we have two main
+ ## web servers (100 and 150) being load balanced and (1.200) as the hot spare
+ ## backup.
+  upstream backend_web_servers {
+      server 192.168.1.100:80 max_fails=250 fail_timeout=180s;
+      server 192.168.1.150:80 max_fails=250 fail_timeout=180s;
+      server 192.168.1.200:80 backup;
+      }
+
+ ## http .:. clients without a host header get an error page. This will handle
+ ## scanners looking for servers on an ip address and broken clients.
+  server {
+     add_header  Cache-Control "public";
+     add_header  X-Frame-Options "DENY";
+     access_log  /var/log/nginx/access.log main buffer=32k;
+     error_log   /var/log/nginx/error.log error;
+     expires     30d;
+     listen      192.168.1.50:80;
+     server_name "";
+
+   ## All other errors get the generic error page
+      error_page 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 495 496 497
+                 500 501 502 503 504 505 506 507 /error_page.html;
+      location  /error_page_generic.html {
+      internal;
+      }
+  }
+
+ ## This is our first hostname, example.com. Any client with a host header
+ ## containing any string in this server{} block's server_name directive will be
+ ## served from here.
+ 
+ ## http .:. example.com 
+  server {
+     add_header  Cache-Control "public";
+     add_header  X-Frame-Options "DENY";
+     access_log  /var/log/nginx/access.log main buffer=32k;
+     access_log  /var/log/nginx/cache.log cache;
+     error_log   /var/log/nginx/error.log error;
+     expires     1h;
+     listen      192.168.1.50:80 sndbuf=128k;
+     limit_req   zone=gulag  burst=1000 nodelay;
+     server_name example.com www.example.com internal_lan_name.domain.lan;
+
+    proxy_redirect     off;
+    proxy_set_header   Host             $host;
+    proxy_set_header   X-Real-IP        $remote_addr;
+    proxy_set_header   X-Forwarded-For  $proxy_add_x_forwarded_for;
+
+    proxy_cache webcache;
+    proxy_cache_key $scheme$host$request_uri;
+    proxy_cache_valid  200 301 302 304 120m;
+    proxy_cache_valid  any 1m;
+
+   # Only allow GET, HEAD and POST request methods. Since this a proxy you may
+   # want to be more restrictive with your request methods. The calls are going
+   # to be passed to the back end server and nginx does not know what it
+   # normally accepts, so everything gets passed. If we only need to accept GET
+   # HEAD and POST then limit that here.
+    if ($request_method !~ ^(GET|HEAD|POST)$ ) {
+        return 403;
+    }
+
+    # user forum. This goes to a different server then the standard we cluster for example. 
+    location /forum/ {
+        proxy_pass http://192.168.1.201/forum/;
+    }
+
+    ## Do not cache any requests using our cgi paths. The http_my_secret_header
+    ## is not used and is just a place holder if you need this function.
+    location ~* (/cgi/||/authorized/|/restrict/) {
+       expires epoch;
+       proxy_no_cache 1;
+       proxy_cache_bypass $http_my_secret_header;
+       proxy_pass http://backend_web_servers;
+    }
+
+    # default htdocs
+    location / {
+        ## redirect host going to www to non-www hostname
+        if ($host ~* ^(www\.example\.com)$ ) {
+          return 301 https://example.com$uri;
+        }
+        proxy_pass http://backend_web_servers;
+    }
+
+   ## All other errors get the generic error page
+      error_page 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 495 496 497
+                 500 501 502 503 504 505 506 507 /error_page.html;
+      location  /error_page_example_com.html {
+      internal;
+      }
+
+  }
+
+ ## This next section is here to show you that nginx can proxy a completely
+ ## different domain name out of the same nginx daemon. On the back end servers,
+ ## someotherdomain.com is served from a different Apache virtual host.
+
+ ## http .:. someotherdomain.com
+  server {
+     add_header  Cache-Control "public";
+     add_header  X-Frame-Options "DENY";
+     access_log  /var/log/nginx/access.log main buffer=32k;
+     access_log  /var/log/nginx/cache.log cache;
+     error_log   /var/log/nginx/error.log error;
+     expires     1h;
+     listen      192.168.1.50:80 sndbuf=128k;
+     limit_req   zone=gulag  burst=100 nodelay;
+     server_name someotherdomain.com www.someotherdomain.com some_internal_lan_name.domain.lan;
+
+    proxy_redirect     off;
+    proxy_set_header   Host             $host;
+    proxy_set_header   X-Real-IP        $remote_addr;
+    proxy_set_header   X-Forwarded-For  $proxy_add_x_forwarded_for;
+
+    proxy_cache webcache;
+    proxy_cache_key $scheme$host$request_uri;
+    proxy_cache_valid  200 301 302 304 180m;
+    proxy_cache_valid  any 1m;
+
+    ## Only allow GET, HEAD and POST request methods
+    if ($request_method !~ ^(GET|HEAD|POST)$ ) {
+         return 403;
+    }
+
+    # snv server
+    location /svn/ {
+       proxy_pass http://192.168.1.60:8000/svn/;
+    }
+
+    # git server
+    location /git/ {
+       proxy_pass http://192.168.1.70:8000/git/;
+    }
+
+    # forum redirect -- for example, perhaps we do not host that
+    # data anymore and want to redirect users to the new location.
+    location /forum/ {
+        rewrite  ^/(.*)$  http://new_loaction.somedomain.com/forum/ permanent;
+    }
+
+    # default htdocs
+    location / {
+        proxy_pass http://backend_web_servers;
+    }
+
+   ## All other errors get the generic error page
+      error_page 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 495 496 497
+                 500 501 502 503 504 505 506 507 /error_page_3.html;
+      location  /error_page_someotherdomain_com.html {
+      internal;
+      }
+   }
+
+}
