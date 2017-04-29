@@ -1,11 +1,15 @@
 #!/bin/bash
 
+# Managed by hades
+export default_password="${hades_password}"
+# Managed by hades
+
 apt-get update -y
 apt-get install vim git wget -y
 useradd cgalan
 usermod -G sudo cgalan
 echo "AllowUsers cgalan" >> /etc/ssh/sshd_config
-echo 'cgalan:super-s3cur3' | chpasswd
+echo "cgalan:${default_password}" | chpasswd
 chage -d0 cgalan
 
 apt-get install fail2ban
