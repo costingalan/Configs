@@ -4,6 +4,9 @@ set -euox pipefail
 yum install deltarpm -y
 yum install epel-release -y
 yum install vim git wget yum-cron yum-utils zsh -y
+cd /etc/yum.repos.d/
+wget http://download.opensuse.org/repositories/shells:fish:release:2/CentOS_7/shells:fish:release:2.repo -y
+yum install fish -y
 yum update -y
 useradd cgalan
 usermod -G wheel cgalan
