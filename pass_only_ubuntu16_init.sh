@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euox pipefail
+
 # Managed by hades
 export default_password="${hades_password}"
 # Managed by hades

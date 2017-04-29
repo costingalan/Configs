@@ -3,6 +3,8 @@
 ##   sh batch_ssh.sh "machine1 machine2" 'uptime'
 #
 
+set -euxo pipefail
+
 ## global options
 TIMEOUT=3
 OUTLOG=/tmp/remote-out-$$.log

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -euox pipefail
 
 # Managered by hades
 EXPORT default_password="${hades_meta}"
